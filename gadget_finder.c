@@ -6,17 +6,139 @@
 //
 //  This code scans ARM binaries for ROP gadgets useful for exploit developers
 
-
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
 
+char path[256];
+
+// well this doesn't work as I thought it would D:
+void removeSpaces(char* source)
+{
+    char* i = source;
+    char* j = source;
+    while(*j != 0)
+    {
+        *i = *j++;
+        if(*i != ' ' || *i != '\t')
+            i++;
+    }
+    *i = 0;
+}
+
+// at the moment this function is only used to grep the arm instruction for storage in the db
+char * systemCallToGrepInstruction(int c1, int c2, int c3, int c4)
+{
+    FILE *fp;
+    char cmd[200];
+    char output[1035];
+    char armInst[32];
+    
+    /* Open the command for reading. */
+    snprintf(cmd, sizeof(cmd), "objdump -D %s | grep '%x %x %x %x' | tr -s ' ' ' ' | cut -d' ' -f6 -f7 -f8 -f9", path, c1, c2, c3, c4);
+    printf("system call -> %s\n", cmd);
+    
+    fp = popen(cmd, "r");
+    if (fp == NULL) {
+        printf("Failed to run command: %s\n", cmd);
+        exit(1);
+    }
+    
+    /* Read the output a line at a time - output it. */
+    while (fgets(output, sizeof(output)-1, fp) != NULL) {
+        printf("SysOut: %s\n", output);
+        sprintf(armInst, output);
+        // this should be the line of the instruction
+    }
+    
+    // this small chunk just removes the new line from the objdump data line. That's all
+    int i;
+    for(i = 0;; i++) {
+        if(armInst[i] == '\n') {
+            armInst[i] = '\0';
+            break;
+        }
+    }
+    
+    /* close */
+    pclose(fp);
+    
+    return armInst;
+}
+
 //this function checks bytes to see if they match common ARM instruction encodings
 //only some instruction encodings are stored here, feel free to add others :)
+// EDIT: This now reads from a instruction database txt file that's in the dir
+//       If the address doesn't exist, then it will be added automatically upon finding
+//       TODO: Somehow find the instruction name that is with it to also write into the column
+//             We could objdump -D the binary that was parsed, and grep the instruction only for the found addr?
 char * checkInstruction(int c1, int c2, int c3, int c4){
+    // ------- start of my stuff -------
+    FILE *fp;
+    char * returnData = "Fin";
+    char row[100];
+    int instructionFound = 0;
+    
+    fp = fopen("instructionDB.txt", "r");
+    if (fp == NULL) {
+        return "instructionDB.txt not found... make sure it's with the finder";
+    }
+    
+    while (fgets(row, sizeof(row), fp) != NULL) {
+        char *token, *str, *tofree;
+        char * foundChunks[5]; // instruction string | c1 | c2 | c3 | c4
+        tofree = str = strdup(row);
+        int i = 0;
+        while ((token = strsep(&str, "|"))) {
+            foundChunks[i] = token;
+            i++;
+        }
+        
+        if (strtol(foundChunks[1], NULL, 0) == c1 && strtol(foundChunks[2], NULL, 0) == c2 && strtol(foundChunks[3], NULL, 0) == c3 && strtol(foundChunks[4], NULL, 0) == c4) {
+            returnData = foundChunks[0];
+            instructionFound = 1;
+        }
+        free(tofree);
+    }
+    fclose(fp);
+    
+    if (instructionFound == 1) {
+        return returnData;
+    } else {
+        char newLine[100];
+        
+        // this is going to look horrible, but it will probably be easy to clean up
+        char hexValues[32];
+        sprintf(hexValues, "0x%x|0x%x|0x%x|0x%x", c1, c2, c3, c4);
+        
+        // Note: bit dirty, but I wanted the hex letters to be caps (not the x's)
+        char *letterPtr;
+        for (letterPtr = hexValues; *letterPtr != '\0'; letterPtr++){
+            if (*letterPtr != 'x')
+                *letterPtr = toupper(*letterPtr);
+        }
+        
+        // Note: Could be a cleaner way to do this? But I wouldn't know in C :/
+        char *armInst = systemCallToGrepInstruction(c1, c2, c3, c4);
+        //removeSpaces(armInst);
+        
+        sprintf(newLine, "%s|%s\n", armInst, hexValues);
+        //printf(newLine);
+        
+        // just need to append this newline to the file and happy days!
+        fp = fopen("instructionDB.txt", "a");
+        fprintf(fp, "\n%s", newLine);
+        fclose(fp);
+        
+        return "UNKNOWN INSTRUCTION (above), need to set up automatic adding to DB.. WIP";
+    }
+    
+    // ------- end of my stuff --------
     
     // check for 07 D0 A0 E1 / mov sp, r7
+    /*
     if (c1 == 0x07 && c2 == 0xD0 && c3 == 0xA0 && c4 == 0xE1){
         return "mov sp, r7";
     }
@@ -32,12 +154,14 @@ char * checkInstruction(int c1, int c2, int c3, int c4){
     if (c1 == 0x03 && c2 == 0x80 && c3 == 0xBD && c4 == 0xE8){
         return "pop {r0, r1, pc}";
     }
-    return "UNKNOWN INSTRUCTION";
+    // check for 01 80 BD E8 / pop {r0, pc}
+    if (c1 == 0x01 && c2 == 0x80 && c3 == 0xBD && c4 == 0xE8) {
+        return "pop {r0, pc}";
+    }
+    */
 }
 
 int main(){
-    
-    char path[256];
     // we'll assume the binaries we'll be scanning are small, and therefore shouldn't require anymore than 99999 bytes to store their contents
     unsigned char hex[99999] = "";
     unsigned char c;
@@ -90,8 +214,6 @@ int main(){
         }
         i++;
     }
-    
-    
     
     return 0;
 }
