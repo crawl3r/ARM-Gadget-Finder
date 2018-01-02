@@ -11,8 +11,10 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 
-char path[256];
+char *path;
 
 // well this doesn't work as I thought it would D:
 void removeSpaces(char* source)
@@ -26,6 +28,20 @@ void removeSpaces(char* source)
             i++;
     }
     *i = 0;
+}
+
+long long get_size_of_bin(const char *binFile)
+{
+    struct stat sb;
+    int getStat = stat(binFile, &sb);
+    if (getStat == -1)
+    {
+        printf("stat");
+        return getStat;
+    }
+    
+    // return size of the file in bytes
+    return (long long)sb.st_size;
 }
 
 // at the moment this function is only used to grep the arm instruction for storage in the db
@@ -161,27 +177,39 @@ char * checkInstruction(int c1, int c2, int c3, int c4){
     */
 }
 
-int main(){
+int main(int argc, char const *argv[]){
     // we'll assume the binaries we'll be scanning are small, and therefore shouldn't require anymore than 99999 bytes to store their contents
-    unsigned char hex[99999] = "";
+    const char *bin;
+    long long binSize;
     unsigned char c;
     char *instruction;
     size_t bytes = 0;
     int i = 0;
     
-    printf("Welcome to @bellis1000's ROP Gadget Finder!\nEnter path to ARM binary:\n");
-    scanf("%s",path);
+    // make sure the argument count is correct before continuing.
+    if (argc != 2)
+    {
+        printf("usage : %c [path/to/file]\n", argv[0]);
+        return -1;
+    }
     
-    FILE *f = fopen(path,"r");
-   
-    fread(&hex, 1, 99999, f);
+    bin = argv[1];
+    path = argv[1]; // this is used later on in the grep... not just in this scope, probably clean this.
+    binSize = get_size_of_bin(bin);
+    unsigned char hex[binSize];
+    
+    printf("Welcome to @bellis1000's ROP Gadget Finder!");
+    FILE *f = fopen(bin, "r");
+    fread(&hex, 1, binSize, f);
+    // make sure to close the file here after reading...
+    fclose(f);
    
     printf("Searching binary for gadgets...\n\n");
     
     // search for 80 80 BD E8 / pop {r7, pc}
     // this is the common "return" instruction in the 32-bit ARM instruction set
     
-    while (i < 99999){
+    while (i < binSize){
         // if pop {r7, pc} is found...
         if (hex[i] == 0x80 && hex[i+1] == 0x80 && hex[i+2] == 0xBD && hex[i+3] == 0xE8){
             // search backwards 4 bytes for previous instruction
@@ -201,7 +229,7 @@ int main(){
     // search for 1E FF 2F E1  / bx lr
     // this is another "return" instruction in the 32-bit ARM instruction set
     
-    while (i < 99999){
+    while (i < binSize){
         if (hex[i] == 0x1E && hex[i+1] == 0xFF && hex[i+2] == 0x2F && hex[i+3] == 0xE1){
             // search backwards 4 bytes for previous instruction
             instruction = checkInstruction(hex[i-4],hex[i-3],hex[i-2],hex[i-1]);
